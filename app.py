@@ -125,7 +125,7 @@ def download_file(filename):
     return send_from_directory(DOSSIER_FICHIERS, filename, as_attachment=False)
 
 # =====================================================
-# LAYOUT PRINCIPAL - NAVIGATION EN BAS À GAUCHE
+# LAYOUT PRINCIPAL - NAVIGATION À GAUCHE, CONTENU À DROITE
 # =====================================================
 
 app.layout = dbc.Container([
@@ -143,16 +143,9 @@ app.layout = dbc.Container([
         ])
     ]),
     
-    # Contenu Principal et Navigation EN BAS
+    # DISPOSITION EN 2 COLONNES : Navigation à gauche, Contenu à droite
     dbc.Row([
-        # Contenu Principal (occupe toute la largeur)
-        dbc.Col([
-            html.Div(id="main-content")
-        ], width=12)
-    ]),
-    
-    # Navigation EN BAS À GAUCHE
-    dbc.Row([
+        # COLONNE GAUCHE : Navigation
         dbc.Col([
             dbc.Card([
                 dbc.CardBody([
@@ -172,18 +165,16 @@ app.layout = dbc.Container([
                         value="tableau"
                     )
                 ])
-            ], style={
-                'position': 'fixed',
-                'bottom': '20px',
-                'left': '20px',
-                'width': '300px',
-                'zIndex': '1000',
-                'boxShadow': '0 4px 8px rgba(0,0,0,0.2)'
-            })
-        ], width=3)
+            ], className="sticky-top")
+        ], width=2),
+        
+        # COLONNE DROITE : Contenu Principal
+        dbc.Col([
+            html.Div(id="main-content")
+        ], width=10)
     ])
     
-], fluid=True, style={'backgroundColor': '#f8f9fa', 'paddingBottom': '200px'})
+], fluid=True, style={'backgroundColor': '#f8f9fa'})
 
 # =====================================================
 # CALLBACKS
