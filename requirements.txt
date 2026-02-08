@@ -1,4 +1,45 @@
-dash==2.14.2
-dash-bootstrap-components==1.5.0
-pandas==2.1.4
-gunicorn==21.2.0
+dash>=2.18.0
+dash-bootstrap-components>=1.6.0
+pandas>=2.2.0
+gunicorn>=23.0.0
+```
+
+**Pourquoi ça marche mieux ?**
+- ✅ Versions plus récentes = wheels pré-compilés (installation RAPIDE)
+- ✅ `>=` au lieu de `==` = plus de flexibilité
+- ✅ Gunicorn mis à jour
+
+---
+
+### **ÉTAPE 2 : Ajoute un fichier `runtime.txt`**
+
+Sur GitHub, crée un **nouveau fichier** nommé `runtime.txt` avec cette ligne :
+```
+python-3.11.11
+```
+
+**Pourquoi ?**
+Render saura quelle version de Python utiliser.
+
+---
+
+### **ÉTAPE 3 : Vérifie ton `Procfile`**
+
+Ton `Procfile` doit contenir **EXACTEMENT** :
+```
+web: gunicorn app:server
+```
+
+⚠️ **ATTENTION** : Dans ton code, le fichier s'appelle `app.py`, donc c'est `app:server` (pas `app_noria_dash:server`)
+
+---
+
+### **ÉTAPE 4 : Redéploie**
+
+1. Sur Render, clique **"Manual Deploy"** → **"Clear build cache & deploy"**
+2. **ATTENDS 3-5 MINUTES** (c'est normal)
+3. Regarde les logs, tu dois voir :
+```
+   Successfully installed dash pandas gunicorn
+   Starting gunicorn
+   Listening at http://0.0.0.0:10000
