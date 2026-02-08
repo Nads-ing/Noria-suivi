@@ -5,6 +5,7 @@ import pandas as pd
 import os
 import base64
 from datetime import datetime
+from flask import send_from_directory
 
 # =====================================================
 # CONFIGURATION INITIALE
@@ -68,10 +69,9 @@ def sauvegarder_fichier(content, filename, tache, villa, type_doc):
     content_type, content_string = content.split(',')
     decoded = base64.b64decode(content_string)
     
-    # Nettoyer le nom
-    extension = filename.split('.')[-1]
+    # Nettoyer le nom - toujours utiliser .pdf
     nom_propre = f"{tache}_{villa}_{type_doc}".replace(" ", "_").replace(".", "").replace(",", "")
-    nom_final = f"{nom_propre}.{extension}"
+    nom_final = f"{nom_propre}.pdf"
     
     chemin_complet = os.path.join(DOSSIER_FICHIERS, nom_final)
     
@@ -83,10 +83,9 @@ def sauvegarder_fichier(content, filename, tache, villa, type_doc):
 def fichier_existe(tache, villa, type_doc):
     """Vérifie si un fichier existe pour cette tâche/villa/type"""
     nom_base = f"{tache}_{villa}_{type_doc}".replace(" ", "_").replace(".", "").replace(",", "")
-    for ext in ['pdf', 'png', 'jpg', 'jpeg']:
-        chemin = os.path.join(DOSSIER_FICHIERS, f"{nom_base}.{ext}")
-        if os.path.exists(chemin):
-            return chemin
+    chemin = os.path.join(DOSSIER_FICHIERS, f"{nom_base}.pdf")
+    if os.path.exists(chemin):
+        return chemin
     return None
 
 def supprimer_fichier(tache, villa, type_doc):
@@ -107,7 +106,7 @@ def get_tous_les_fichiers(tache, villa):
             fichiers[type_doc] = {
                 'chemin': chemin,
                 'nom': os.path.basename(chemin),
-                'extension': chemin.split('.')[-1],
+                'extension': 'pdf',
                 'label': label
             }
     return fichiers
@@ -118,10 +117,15 @@ def get_tous_les_fichiers(tache, villa):
 
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 app.title = "Suivi Chantier Noria"
-server = app.server  # Pour déploiement avec gunicorn
+server = app.server
+
+# Route pour servir les fichiers
+@server.route('/download/<path:filename>')
+def download_file(filename):
+    return send_from_directory(DOSSIER_FICHIERS, filename, as_attachment=False)
 
 # =====================================================
-# LAYOUT PRINCIPAL
+# LAYOUT PRINCIPAL - NAVIGATION EN BAS À GAUCHE
 # =====================================================
 
 app.layout = dbc.Container([
@@ -132,14 +136,22 @@ app.layout = dbc.Container([
     dcc.Store(id='current-page', data='tableau'),
     dcc.Store(id='refresh-trigger', data=0),
     
-    # Titre et Navigation
+    # Titre Principal
     dbc.Row([
         dbc.Col([
             html.H1("🏗️ Suivi Chantier Noria - 108 Villas", className="text-center mb-4 mt-3")
         ])
     ]),
     
-    # Sidebar Navigation
+    # Contenu Principal et Navigation EN BAS
+    dbc.Row([
+        # Contenu Principal (occupe toute la largeur)
+        dbc.Col([
+            html.Div(id="main-content")
+        ], width=12)
+    ]),
+    
+    # Navigation EN BAS À GAUCHE
     dbc.Row([
         dbc.Col([
             dbc.Card([
@@ -160,16 +172,18 @@ app.layout = dbc.Container([
                         value="tableau"
                     )
                 ])
-            ], className="sticky-top")
-        ], width=2),
-        
-        # Contenu Principal
-        dbc.Col([
-            html.Div(id="main-content")
-        ], width=10)
+            ], style={
+                'position': 'fixed',
+                'bottom': '20px',
+                'left': '20px',
+                'width': '300px',
+                'zIndex': '1000',
+                'boxShadow': '0 4px 8px rgba(0,0,0,0.2)'
+            })
+        ], width=3)
     ])
     
-], fluid=True, style={'backgroundColor': '#f8f9fa'})
+], fluid=True, style={'backgroundColor': '#f8f9fa', 'paddingBottom': '200px'})
 
 # =====================================================
 # CALLBACKS
@@ -215,13 +229,22 @@ def create_tableau_page(is_admin, selected_cell):
             row[villa] = df.at[tache, villa]
         table_data.append(row)
     
-    # Créer les colonnes avec style conditionnel
+    # Créer les colonnes avec style conditionnel - TÂCHES ALIGNÉES À GAUCHE
     columns = [{'name': 'Tâche', 'id': 'Tâche', 'editable': False}]
     for villa in LISTE_VILLAS:
         columns.append({'name': villa, 'id': villa, 'editable': False})
     
     # Style conditionnel pour les cellules
     style_data_conditional = []
+    
+    # Aligner les tâches à GAUCHE
+    style_data_conditional.append({
+        'if': {'column_id': 'Tâche'},
+        'textAlign': 'left',
+        'paddingLeft': '15px',
+        'fontWeight': 'bold'
+    })
+    
     for villa in LISTE_VILLAS:
         for status, color in [('OK', '#d4edda'), ('Non Conforme', '#f8d7da'), 
                               ('En cours', '#fff3cd'), ('À faire', '#ffffff')]:
@@ -234,9 +257,16 @@ def create_tableau_page(is_admin, selected_cell):
                 'fontWeight': 'bold' if status in ['OK', 'Non Conforme'] else 'normal'
             })
     
-    # Récupérer la tâche et villa sélectionnées
-    tache_idx = selected_cell.get('row', 0)
-    villa_idx = selected_cell.get('column', 0)
+    # Récupérer la tâche et villa sélectionnées - CORRECTION DU BUG
+    tache_idx = selected_cell.get('row', 0) if selected_cell else 0
+    villa_idx = selected_cell.get('column', 0) if selected_cell else 0
+    
+    # Vérifier que les index sont valides
+    if tache_idx >= len(LISTE_TACHES):
+        tache_idx = 0
+    if villa_idx >= len(LISTE_VILLAS):
+        villa_idx = 0
+        
     tache_select = LISTE_TACHES[tache_idx]
     villa_select = LISTE_VILLAS[villa_idx]
     
@@ -252,13 +282,15 @@ def create_tableau_page(is_admin, selected_cell):
                 style_cell={
                     'textAlign': 'center',
                     'padding': '10px',
-                    'fontSize': '14px'
+                    'fontSize': '14px',
+                    'minWidth': '100px'
                 },
                 style_header={
                     'backgroundColor': '#f0f2f6',
                     'fontWeight': 'bold',
                     'fontSize': '15px',
-                    'color': '#1f77b4'
+                    'color': '#1f77b4',
+                    'textAlign': 'center'
                 },
                 style_data_conditional=style_data_conditional,
                 cell_selectable=True,
@@ -298,7 +330,8 @@ def create_inspecteur_box(tache, villa, is_admin):
                 ],
                 value=statut_actuel
             ),
-            dbc.Button("💾 Sauvegarder Statut", id="btn-save-status", color="success", className="mt-2 w-100", size="sm")
+            dbc.Button("💾 Sauvegarder Statut", id="btn-save-status", color="success", className="mt-2 w-100", size="sm"),
+            html.Div(id='status-message', className="mt-2")
         ])
     else:
         color_text = "green" if statut_actuel == "OK" else "red" if statut_actuel == "Non Conforme" else "grey"
@@ -311,6 +344,8 @@ def create_inspecteur_box(tache, villa, is_admin):
         
         if fichier_info:
             # Fichier existe - Afficher avec options
+            file_url = f"/download/{fichier_info['nom']}"
+            
             card_content = [
                 html.H6(label, className="mb-2"),
                 dbc.Badge(f"✓ {fichier_info['nom']}", color="success", className="mb-2"),
@@ -321,18 +356,16 @@ def create_inspecteur_box(tache, villa, is_admin):
                         id={'type': 'btn-view-doc', 'index': f"{tache}_{villa}_{type_doc}"},
                         color="info", 
                         size="sm",
-                        href=f"/{fichier_info['chemin']}",
-                        target="_blank",
-                        external_link=True
+                        href=file_url,
+                        target="_blank"
                     ),
                     dbc.Button(
                         "📥 Télécharger", 
                         id={'type': 'btn-download-doc', 'index': f"{tache}_{villa}_{type_doc}"},
                         color="primary", 
                         size="sm",
-                        href=f"/{fichier_info['chemin']}",
-                        download=fichier_info['nom'],
-                        external_link=True
+                        href=file_url,
+                        download=fichier_info['nom']
                     )
                 ], className="w-100 mb-2")
             ]
@@ -340,12 +373,15 @@ def create_inspecteur_box(tache, villa, is_admin):
             if is_admin:
                 card_content.append(
                     dbc.ButtonGroup([
-                        dbc.Button(
-                            "🔄 Remplacer", 
-                            id={'type': 'btn-replace-doc', 'index': f"{tache}_{villa}_{type_doc}"},
-                            color="warning", 
-                            size="sm",
-                            className="me-1"
+                        dcc.Upload(
+                            id={'type': 'upload-replace', 'index': f"{tache}_{villa}_{type_doc}"},
+                            children=dbc.Button(
+                                "🔄 Remplacer", 
+                                color="warning", 
+                                size="sm",
+                                className="me-1"
+                            ),
+                            multiple=False
                         ),
                         dbc.Button(
                             "🗑️ Supprimer", 
@@ -378,12 +414,9 @@ def create_inspecteur_box(tache, villa, is_admin):
             dbc.Col([
                 dbc.Card([
                     dbc.CardBody(card_content)
-                ], className="mb-2", style={'minHeight': '180px'})
+                ], className="mb-2", style={'minHeight': '200px'})
             ], width=12 if len(types_docs) == 1 else 6 if len(types_docs) <= 2 else 4)
         )
-    
-    # Zone de message pour les actions
-    action_messages = html.Div(id='action-messages', className="mt-2")
     
     return dbc.Card([
         dbc.CardBody([
@@ -413,8 +446,7 @@ def create_inspecteur_box(tache, villa, is_admin):
             dbc.Row([
                 dbc.Col([
                     html.H5(f"📂 Documents pour : {tache}", className="mb-3"),
-                    dbc.Row(docs_cards),
-                    action_messages
+                    dbc.Row(docs_cards)
                 ], width=9),
                 dbc.Col([
                     validation_content
@@ -436,7 +468,7 @@ def create_dossier_page():
     ])
 
 def create_suivi_page(is_admin):
-    """Page suivi de chaque tâche"""
+    """Page suivi de chaque tâche - AVEC UPLOAD"""
     return html.Div([
         html.H2("📂 Explorateur de Dossiers (Vue Arborescence)"),
         
@@ -462,7 +494,7 @@ def create_suivi_page(is_admin):
         html.Div(id='folder-content')
     ])
 
-# Callback pour la sélection de cellule dans le tableau
+# Callback pour la sélection de cellule dans le tableau - CORRIGÉ
 @app.callback(
     [Output('selected-cell', 'data'),
      Output('inspecteur-ancre', 'children')],
@@ -472,12 +504,12 @@ def create_suivi_page(is_admin):
 def update_selected_cell(active_cell):
     if active_cell:
         col_id = active_cell['column_id']
-        if col_id != 'Tâche':
+        if col_id != 'Tâche' and col_id in LISTE_VILLAS:  # VÉRIFICATION AJOUTÉE
             row_idx = active_cell['row']
             col_idx = LISTE_VILLAS.index(col_id)
             
             scroll_script = html.Script(
-                "setTimeout(function() { document.getElementById('inspecteur-ancre').scrollIntoView({behavior: 'smooth', block: 'start'}); }, 100);"
+                "setTimeout(function() { var elem = document.getElementById('inspecteur-ancre'); if(elem) elem.scrollIntoView({behavior: 'smooth', block: 'start'}); }, 100);"
             )
             
             return {'row': row_idx, 'column': col_idx}, scroll_script
@@ -496,9 +528,10 @@ def update_from_selects(tache_idx, villa_idx):
         return {'row': int(tache_idx), 'column': int(villa_idx)}
     return dash.no_update
 
-# Callback pour sauvegarder le changement de statut
+# Callback pour sauvegarder le changement de statut - AVEC MESSAGE
 @app.callback(
-    Output('refresh-trigger', 'data'),
+    [Output('refresh-trigger', 'data'),
+     Output('status-message', 'children')],
     [Input('btn-save-status', 'n_clicks')],
     [State('statut-radio', 'value'),
      State('selected-cell', 'data'),
@@ -507,86 +540,109 @@ def update_from_selects(tache_idx, villa_idx):
     prevent_initial_call=True
 )
 def save_status(n_clicks, new_status, selected_cell, is_admin, current_refresh):
-    if n_clicks and is_admin:
+    if n_clicks and is_admin and selected_cell:
         df = charger_donnees()
         tache = LISTE_TACHES[selected_cell['row']]
         villa = LISTE_VILLAS[selected_cell['column']]
         df.at[tache, villa] = new_status
         sauvegarder_donnees(df)
-        return current_refresh + 1
-    return dash.no_update
+        return current_refresh + 1, dbc.Alert("✅ Statut sauvegardé!", color="success", dismissable=True, duration=3000)
+    return dash.no_update, dash.no_update
 
-# Callback pour uploader un document
-@app.callback(
-    Output('action-messages', 'children'),
-    [Input({'type': 'upload-doc', 'index': ALL}, 'contents')],
-    [State({'type': 'upload-doc', 'index': ALL}, 'filename'),
-     State({'type': 'upload-doc', 'index': ALL}, 'id'),
-     State('is-admin', 'data')],
-    prevent_initial_call=True
-)
-def upload_file(contents_list, filenames_list, ids_list, is_admin):
-    if not is_admin:
-        return dbc.Alert("⛔ Accès refusé", color="danger")
-    
-    for i, content in enumerate(contents_list):
-        if content:
-            filename = filenames_list[i]
-            index = ids_list[i]['index']
-            parts = index.split('_')
-            
-            # Reconstituer tache et villa
-            tache = None
-            villa = None
-            type_doc = None
-            
-            for j, tache_possible in enumerate(LISTE_TACHES):
-                if index.startswith(tache_possible):
-                    tache = tache_possible
-                    reste = index[len(tache)+1:]
-                    for villa_possible in LISTE_VILLAS:
-                        if reste.startswith(villa_possible):
-                            villa = villa_possible
-                            type_doc = reste[len(villa)+1:]
-                            break
-                    break
-            
-            if tache and villa and type_doc:
-                nom_final = sauvegarder_fichier(content, filename, tache, villa, type_doc)
-                return dbc.Alert(f"✅ Fichier uploadé : {nom_final}", color="success", dismissable=True, duration=4000)
-    
-    return dash.no_update
-
-# Callback pour supprimer un document
+# Callback UNIFIÉ pour uploader un document (nouveau ou remplacement) - TEMPS RÉEL
 @app.callback(
     Output('refresh-trigger', 'data', allow_duplicate=True),
-    [Input({'type': 'btn-delete-doc', 'index': ALL}, 'n_clicks')],
-    [State({'type': 'btn-delete-doc', 'index': ALL}, 'id'),
+    [Input({'type': 'upload-doc', 'index': ALL}, 'contents'),
+     Input({'type': 'upload-replace', 'index': ALL}, 'contents'),
+     Input({'type': 'upload-folder', 'index': ALL}, 'contents')],
+    [State({'type': 'upload-doc', 'index': ALL}, 'filename'),
+     State({'type': 'upload-doc', 'index': ALL}, 'id'),
+     State({'type': 'upload-replace', 'index': ALL}, 'filename'),
+     State({'type': 'upload-replace', 'index': ALL}, 'id'),
+     State({'type': 'upload-folder', 'index': ALL}, 'filename'),
+     State({'type': 'upload-folder', 'index': ALL}, 'id'),
      State('is-admin', 'data'),
      State('refresh-trigger', 'data')],
     prevent_initial_call=True
 )
-def delete_file(n_clicks_list, ids_list, is_admin, current_refresh):
+def upload_file_unified(contents_new, contents_replace, contents_folder,
+                       filenames_new, ids_new, filenames_replace, ids_replace,
+                       filenames_folder, ids_folder, is_admin, current_refresh):
     if not is_admin:
         return dash.no_update
     
-    for i, n_clicks in enumerate(n_clicks_list):
-        if n_clicks:
-            index = ids_list[i]['index']
-            parts = index.split('_')
-            
-            for tache in LISTE_TACHES:
-                if index.startswith(tache):
-                    reste = index[len(tache)+1:]
-                    for villa in LISTE_VILLAS:
-                        if reste.startswith(villa):
-                            type_doc = reste[len(villa)+1:]
-                            if supprimer_fichier(tache, villa, type_doc):
-                                return current_refresh + 1
+    # Combiner toutes les sources d'upload
+    all_uploads = []
+    
+    if contents_new:
+        for i, content in enumerate(contents_new):
+            if content:
+                all_uploads.append((content, filenames_new[i], ids_new[i]['index']))
+    
+    if contents_replace:
+        for i, content in enumerate(contents_replace):
+            if content:
+                all_uploads.append((content, filenames_replace[i], ids_replace[i]['index']))
+    
+    if contents_folder:
+        for i, content in enumerate(contents_folder):
+            if content:
+                all_uploads.append((content, filenames_folder[i], ids_folder[i]['index']))
+    
+    # Traiter tous les uploads
+    for content, filename, index in all_uploads:
+        # Parser l'index pour extraire tâche, villa, type_doc
+        for tache in LISTE_TACHES:
+            if index.startswith(tache):
+                reste = index[len(tache)+1:]
+                for villa in LISTE_VILLAS:
+                    if reste.startswith(villa):
+                        type_doc = reste[len(villa)+1:]
+                        sauvegarder_fichier(content, filename, tache, villa, type_doc)
+                        return current_refresh + 1
     
     return dash.no_update
 
-# Callback pour la page de suivi
+# Callback pour supprimer un document - TEMPS RÉEL
+@app.callback(
+    Output('refresh-trigger', 'data', allow_duplicate=True),
+    [Input({'type': 'btn-delete-doc', 'index': ALL}, 'n_clicks'),
+     Input({'type': 'btn-delete-folder', 'index': ALL}, 'n_clicks')],
+    [State({'type': 'btn-delete-doc', 'index': ALL}, 'id'),
+     State({'type': 'btn-delete-folder', 'index': ALL}, 'id'),
+     State('is-admin', 'data'),
+     State('refresh-trigger', 'data')],
+    prevent_initial_call=True
+)
+def delete_file_unified(n_clicks_list, n_clicks_folder, ids_list, ids_folder, is_admin, current_refresh):
+    if not is_admin:
+        return dash.no_update
+    
+    all_clicks = []
+    
+    if n_clicks_list:
+        for i, n_clicks in enumerate(n_clicks_list):
+            if n_clicks:
+                all_clicks.append(ids_list[i]['index'])
+    
+    if n_clicks_folder:
+        for i, n_clicks in enumerate(n_clicks_folder):
+            if n_clicks:
+                all_clicks.append(ids_folder[i]['index'])
+    
+    for index in all_clicks:
+        for tache in LISTE_TACHES:
+            if index.startswith(tache):
+                reste = index[len(tache)+1:]
+                for villa in LISTE_VILLAS:
+                    if reste.startswith(villa):
+                        type_doc = reste[len(villa)+1:]
+                        if supprimer_fichier(tache, villa, type_doc):
+                            return current_refresh + 1
+    
+    return dash.no_update
+
+# Callback pour la page de suivi - AVEC TOUTES LES FONCTIONNALITÉS
 @app.callback(
     Output('folder-content', 'children'),
     [Input('folder-tache', 'value'),
@@ -598,7 +654,7 @@ def update_folder_content(tache, villa, refresh, is_admin):
     df = charger_donnees()
     statut = df.at[tache, villa]
     
-    # Même système de gestion de documents que dans l'inspecteur
+    # Récupérer les documents
     fichiers_existants = get_tous_les_fichiers(tache, villa)
     types_docs = get_types_docs_pour_tache(tache)
     
@@ -606,6 +662,30 @@ def update_folder_content(tache, villa, refresh, is_admin):
     for type_doc, label in types_docs.items():
         fichier_info = fichiers_existants.get(type_doc)
         if fichier_info:
+            file_url = f"/download/{fichier_info['nom']}"
+            
+            # Boutons de base
+            buttons = [
+                dbc.Button("👁️ Voir", href=file_url, target="_blank", color="info", size="sm", className="me-1"),
+                dbc.Button("📥 Télécharger", href=file_url, download=fichier_info['nom'], color="primary", size="sm", className="me-1")
+            ]
+            
+            # Boutons admin
+            if is_admin:
+                buttons.extend([
+                    dcc.Upload(
+                        id={'type': 'upload-folder', 'index': f"{tache}_{villa}_{type_doc}"},
+                        children=dbc.Button("🔄 Remplacer", color="warning", size="sm", className="me-1"),
+                        multiple=False
+                    ),
+                    dbc.Button(
+                        "🗑️ Supprimer",
+                        id={'type': 'btn-delete-folder', 'index': f"{tache}_{villa}_{type_doc}"},
+                        color="danger",
+                        size="sm"
+                    )
+                ])
+            
             docs_list.append(
                 dbc.ListGroupItem([
                     dbc.Row([
@@ -613,23 +693,40 @@ def update_folder_content(tache, villa, refresh, is_admin):
                             html.Strong(label),
                             html.Br(),
                             html.Small(fichier_info['nom'], className="text-muted")
-                        ], width=6),
+                        ], width=4),
                         dbc.Col([
-                            dbc.ButtonGroup([
-                                dbc.Button("👁️ Voir", href=f"/{fichier_info['chemin']}", target="_blank", color="info", size="sm", external_link=True),
-                                dbc.Button("📥 Télécharger", href=f"/{fichier_info['chemin']}", download=fichier_info['nom'], color="primary", size="sm", external_link=True),
-                            ], className="float-end")
-                        ], width=6)
+                            dbc.ButtonGroup(buttons, className="float-end")
+                        ], width=8)
                     ])
                 ])
             )
         else:
-            docs_list.append(
-                dbc.ListGroupItem([
-                    html.Strong(label),
-                    dbc.Badge("⚠️ Manquant", color="warning", className="ms-2")
-                ])
-            )
+            # Document manquant
+            if is_admin:
+                docs_list.append(
+                    dbc.ListGroupItem([
+                        dbc.Row([
+                            dbc.Col([
+                                html.Strong(label),
+                                dbc.Badge("⚠️ Manquant", color="warning", className="ms-2")
+                            ], width=6),
+                            dbc.Col([
+                                dcc.Upload(
+                                    id={'type': 'upload-folder', 'index': f"{tache}_{villa}_{type_doc}"},
+                                    children=dbc.Button("📤 Uploader", color="success", size="sm", className="float-end"),
+                                    multiple=False
+                                )
+                            ], width=6)
+                        ])
+                    ])
+                )
+            else:
+                docs_list.append(
+                    dbc.ListGroupItem([
+                        html.Strong(label),
+                        dbc.Badge("⚠️ Manquant", color="warning", className="ms-2")
+                    ])
+                )
     
     return html.Div([
         html.H3(f"📂 {tache} > {villa}", className="mb-3"),
