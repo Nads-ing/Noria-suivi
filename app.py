@@ -73,19 +73,27 @@ def sauvegarder_fichier(content, filename, tache, villa, type_doc):
     nom_propre = f"{tache}_{villa}_{type_doc}".replace(" ", "_").replace(".", "").replace(",", "")
     nom_final = f"{nom_propre}.pdf"
     
-    chemin_complet = os.path.join(DOSSIER_FICHIERS, nom_final)
+    # Utiliser le chemin absolu pour éviter les problèmes
+    chemin_complet = os.path.abspath(os.path.join(DOSSIER_FICHIERS, nom_final))
+    
+    # Créer le dossier s'il n'existe pas
+    os.makedirs(os.path.dirname(chemin_complet), exist_ok=True)
     
     with open(chemin_complet, 'wb') as f:
         f.write(decoded)
     
+    print(f"✅ Fichier sauvegardé: {chemin_complet}")  # Debug
     return nom_final
 
 def fichier_existe(tache, villa, type_doc):
     """Vérifie si un fichier existe pour cette tâche/villa/type"""
     nom_base = f"{tache}_{villa}_{type_doc}".replace(" ", "_").replace(".", "").replace(",", "")
-    chemin = os.path.join(DOSSIER_FICHIERS, f"{nom_base}.pdf")
+    chemin = os.path.abspath(os.path.join(DOSSIER_FICHIERS, f"{nom_base}.pdf"))
     if os.path.exists(chemin):
+        print(f"✅ Fichier trouvé: {chemin}")  # Debug
         return chemin
+    else:
+        print(f"❌ Fichier non trouvé: {chemin}")  # Debug
     return None
 
 def supprimer_fichier(tache, villa, type_doc):
@@ -122,7 +130,24 @@ server = app.server
 # Route pour servir les fichiers
 @server.route('/download/<path:filename>')
 def download_file(filename):
-    return send_from_directory(DOSSIER_FICHIERS, filename, as_attachment=False)
+    """Sert les fichiers PDF depuis le dossier fichiers_chantier"""
+    return send_from_directory(
+        os.path.abspath(DOSSIER_FICHIERS), 
+        filename, 
+        as_attachment=False,
+        mimetype='application/pdf'
+    )
+
+@server.route('/download-file/<path:filename>')
+def download_file_attachment(filename):
+    """Force le téléchargement du fichier"""
+    return send_from_directory(
+        os.path.abspath(DOSSIER_FICHIERS), 
+        filename, 
+        as_attachment=True,
+        download_name=filename,
+        mimetype='application/pdf'
+    )
 
 # =====================================================
 # LAYOUT PRINCIPAL - NAVIGATION À GAUCHE, CONTENU À DROITE
@@ -335,7 +360,8 @@ def create_inspecteur_box(tache, villa, is_admin):
         
         if fichier_info:
             # Fichier existe - Afficher avec options
-            file_url = f"/download/{fichier_info['nom']}"
+            file_url_view = f"/download/{fichier_info['nom']}"
+            file_url_download = f"/download-file/{fichier_info['nom']}"
             
             card_content = [
                 html.H6(label, className="mb-2"),
@@ -347,7 +373,7 @@ def create_inspecteur_box(tache, villa, is_admin):
                         id={'type': 'btn-view-doc', 'index': f"{tache}_{villa}_{type_doc}"},
                         color="info", 
                         size="sm",
-                        href=file_url,
+                        href=file_url_view,
                         target="_blank"
                     ),
                     dbc.Button(
@@ -355,8 +381,7 @@ def create_inspecteur_box(tache, villa, is_admin):
                         id={'type': 'btn-download-doc', 'index': f"{tache}_{villa}_{type_doc}"},
                         color="primary", 
                         size="sm",
-                        href=file_url,
-                        download=fichier_info['nom']
+                        href=file_url_download
                     )
                 ], className="w-100 mb-2")
             ]
@@ -653,12 +678,13 @@ def update_folder_content(tache, villa, refresh, is_admin):
     for type_doc, label in types_docs.items():
         fichier_info = fichiers_existants.get(type_doc)
         if fichier_info:
-            file_url = f"/download/{fichier_info['nom']}"
+            file_url_view = f"/download/{fichier_info['nom']}"
+            file_url_download = f"/download-file/{fichier_info['nom']}"
             
             # Boutons de base
             buttons = [
-                dbc.Button("👁️ Voir", href=file_url, target="_blank", color="info", size="sm", className="me-1"),
-                dbc.Button("📥 Télécharger", href=file_url, download=fichier_info['nom'], color="primary", size="sm", className="me-1")
+                dbc.Button("👁️ Voir", href=file_url_view, target="_blank", color="info", size="sm", className="me-1"),
+                dbc.Button("📥 Télécharger", href=file_url_download, color="primary", size="sm", className="me-1")
             ]
             
             # Boutons admin
