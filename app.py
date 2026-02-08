@@ -5,17 +5,14 @@ import pandas as pd
 import os
 import base64
 from datetime import datetime
-from flask import send_from_directory, redirect
-import boto3
-from botocore.exceptions import ClientError
-from io import BytesIO
+from flask import send_from_directory
 
 # =====================================================
 # CONFIGURATION INITIALE
 # =====================================================
 
 FICHIER_DONNEES = "mon_suivi_general.csv"
-DOSSIER_FICHIERS = "fichiers_chantier"  # Utilisé uniquement en local
+DOSSIER_FICHIERS = "fichiers_chantier"
 LISTE_VILLAS = [f"Villa {i}" for i in range(1, 109)]
 LISTE_TACHES = [
     "1. Réception des axes",
@@ -24,27 +21,9 @@ LISTE_TACHES = [
     "4. Réception béton des semelles (Labo)"
 ]
 
-# Configuration AWS S3
-AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
-AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
-AWS_BUCKET_NAME = os.getenv('AWS_BUCKET_NAME')
-AWS_REGION = os.getenv('AWS_REGION', 'eu-west-3')
-
-# Déterminer si on utilise S3 ou stockage local
-USE_S3 = all([AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_BUCKET_NAME])
-
-if USE_S3:
-    print("✅ Mode S3 activé - Les fichiers seront stockés sur AWS S3")
-    s3_client = boto3.client(
-        's3',
-        aws_access_key_id=AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-        region_name=AWS_REGION
-    )
-else:
-    print("⚠️ Mode LOCAL activé - Les fichiers seront stockés localement")
-    if not os.path.exists(DOSSIER_FICHIERS):
-        os.makedirs(DOSSIER_FICHIERS)
+# Créer le dossier de fichiers s'il n'existe pas
+if not os.path.exists(DOSSIER_FICHIERS):
+    os.makedirs(DOSSIER_FICHIERS)
 
 # =====================================================
 # FONCTIONS UTILITAIRES
@@ -85,12 +64,8 @@ def get_types_docs_pour_tache(tache):
     else:
         return {"Document": "📄 Document"}
 
-# =====================================================
-# FONCTIONS S3
-# =====================================================
-
 def sauvegarder_fichier(content, filename, tache, villa, type_doc):
-    """Sauvegarde un fichier (S3 ou local selon la config)"""
+    """Sauvegarde un fichier uploadé"""
     content_type, content_string = content.split(',')
     decoded = base64.b64decode(content_string)
     
@@ -98,116 +73,51 @@ def sauvegarder_fichier(content, filename, tache, villa, type_doc):
     nom_propre = f"{tache}_{villa}_{type_doc}".replace(" ", "_").replace(".", "").replace(",", "")
     nom_final = f"{nom_propre}.pdf"
     
-    if USE_S3:
-        try:
-            # Upload vers S3
-            s3_client.put_object(
-                Bucket=AWS_BUCKET_NAME,
-                Key=nom_final,
-                Body=decoded,
-                ContentType='application/pdf',
-                CacheControl='no-cache'
-            )
-            print(f"✅ Fichier uploadé sur S3: {nom_final}")
-            return nom_final
-        except Exception as e:
-            print(f"❌ Erreur S3 upload: {e}")
-            return None
-    else:
-        # Stockage local (développement)
-        chemin_complet = os.path.abspath(os.path.join(DOSSIER_FICHIERS, nom_final))
-        os.makedirs(os.path.dirname(chemin_complet), exist_ok=True)
-        with open(chemin_complet, 'wb') as f:
-            f.write(decoded)
-        print(f"✅ Fichier sauvegardé localement: {chemin_complet}")
-        return nom_final
+    # Utiliser le chemin absolu pour éviter les problèmes
+    chemin_complet = os.path.abspath(os.path.join(DOSSIER_FICHIERS, nom_final))
+    
+    # Créer le dossier s'il n'existe pas
+    os.makedirs(os.path.dirname(chemin_complet), exist_ok=True)
+    
+    with open(chemin_complet, 'wb') as f:
+        f.write(decoded)
+    
+    print(f"✅ Fichier sauvegardé: {chemin_complet}")  # Debug
+    return nom_final
 
 def fichier_existe(tache, villa, type_doc):
-    """Vérifie si un fichier existe (S3 ou local)"""
+    """Vérifie si un fichier existe pour cette tâche/villa/type"""
     nom_base = f"{tache}_{villa}_{type_doc}".replace(" ", "_").replace(".", "").replace(",", "")
-    nom_fichier = f"{nom_base}.pdf"
-    
-    if USE_S3:
-        try:
-            s3_client.head_object(Bucket=AWS_BUCKET_NAME, Key=nom_fichier)
-            print(f"✅ Fichier trouvé sur S3: {nom_fichier}")
-            return nom_fichier  # Retourne le nom, pas le chemin
-        except ClientError:
-            print(f"❌ Fichier non trouvé sur S3: {nom_fichier}")
-            return None
+    chemin = os.path.abspath(os.path.join(DOSSIER_FICHIERS, f"{nom_base}.pdf"))
+    if os.path.exists(chemin):
+        print(f"✅ Fichier trouvé: {chemin}")  # Debug
+        return chemin
     else:
-        chemin = os.path.abspath(os.path.join(DOSSIER_FICHIERS, nom_fichier))
-        if os.path.exists(chemin):
-            print(f"✅ Fichier trouvé localement: {chemin}")
-            return chemin
-        else:
-            print(f"❌ Fichier non trouvé localement: {chemin}")
-            return None
+        print(f"❌ Fichier non trouvé: {chemin}")  # Debug
+    return None
 
 def supprimer_fichier(tache, villa, type_doc):
-    """Supprime un fichier (S3 ou local)"""
-    nom_base = f"{tache}_{villa}_{type_doc}".replace(" ", "_").replace(".", "").replace(",", "")
-    nom_fichier = f"{nom_base}.pdf"
-    
-    if USE_S3:
-        try:
-            s3_client.delete_object(Bucket=AWS_BUCKET_NAME, Key=nom_fichier)
-            print(f"✅ Fichier supprimé de S3: {nom_fichier}")
-            return True
-        except Exception as e:
-            print(f"❌ Erreur suppression S3: {e}")
-            return False
-    else:
-        chemin = fichier_existe(tache, villa, type_doc)
-        if chemin and os.path.exists(chemin):
-            os.remove(chemin)
-            print(f"✅ Fichier supprimé localement: {chemin}")
-            return True
-        return False
+    """Supprime un fichier"""
+    chemin = fichier_existe(tache, villa, type_doc)
+    if chemin and os.path.exists(chemin):
+        os.remove(chemin)
+        return True
+    return False
 
 def get_tous_les_fichiers(tache, villa):
     """Récupère tous les fichiers existants pour une tâche/villa"""
     fichiers = {}
     types_possibles = get_types_docs_pour_tache(tache)
     for type_doc, label in types_possibles.items():
-        fichier = fichier_existe(tache, villa, type_doc)
-        if fichier:
-            if USE_S3:
-                nom = fichier  # S3 retourne directement le nom
-            else:
-                nom = os.path.basename(fichier)
-            
+        chemin = fichier_existe(tache, villa, type_doc)
+        if chemin:
             fichiers[type_doc] = {
-                'chemin': fichier,
-                'nom': nom,
+                'chemin': chemin,
+                'nom': os.path.basename(chemin),
                 'extension': 'pdf',
                 'label': label
             }
     return fichiers
-
-def generer_url_s3(nom_fichier, expiration=3600, download=False):
-    """Génère une URL signée pour accéder au fichier S3"""
-    try:
-        params = {
-            'Bucket': AWS_BUCKET_NAME,
-            'Key': nom_fichier
-        }
-        
-        if download:
-            params['ResponseContentDisposition'] = f'attachment; filename="{nom_fichier}"'
-        else:
-            params['ResponseContentDisposition'] = 'inline'
-            params['ResponseContentType'] = 'application/pdf'
-        
-        url = s3_client.generate_presigned_url(
-            'get_object',
-            Params=params,
-            ExpiresIn=expiration
-        )
-        return url
-    except Exception as e:
-        print(f"❌ Erreur génération URL S3: {e}")
-        return None
 
 # =====================================================
 # INITIALISATION DE L'APP DASH
@@ -217,28 +127,27 @@ app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 app.title = "Suivi Chantier Noria"
 server = app.server
 
-# Routes pour servir les fichiers (uniquement en mode local)
-if not USE_S3:
-    @server.route('/download/<path:filename>')
-    def download_file(filename):
-        """Sert les fichiers PDF depuis le dossier local"""
-        return send_from_directory(
-            os.path.abspath(DOSSIER_FICHIERS), 
-            filename, 
-            as_attachment=False,
-            mimetype='application/pdf'
-        )
+# Route pour servir les fichiers
+@server.route('/download/<path:filename>')
+def download_file(filename):
+    """Sert les fichiers PDF depuis le dossier fichiers_chantier"""
+    return send_from_directory(
+        os.path.abspath(DOSSIER_FICHIERS), 
+        filename, 
+        as_attachment=False,
+        mimetype='application/pdf'
+    )
 
-    @server.route('/download-file/<path:filename>')
-    def download_file_attachment(filename):
-        """Force le téléchargement du fichier local"""
-        return send_from_directory(
-            os.path.abspath(DOSSIER_FICHIERS), 
-            filename, 
-            as_attachment=True,
-            download_name=filename,
-            mimetype='application/pdf'
-        )
+@server.route('/download-file/<path:filename>')
+def download_file_attachment(filename):
+    """Force le téléchargement du fichier"""
+    return send_from_directory(
+        os.path.abspath(DOSSIER_FICHIERS), 
+        filename, 
+        as_attachment=True,
+        download_name=filename,
+        mimetype='application/pdf'
+    )
 
 # =====================================================
 # LAYOUT PRINCIPAL - NAVIGATION À GAUCHE, CONTENU À DROITE
@@ -450,13 +359,9 @@ def create_inspecteur_box(tache, villa, is_admin):
         fichier_info = fichiers_existants.get(type_doc)
         
         if fichier_info:
-            # Fichier existe - Générer les URLs
-            if USE_S3:
-                file_url_view = generer_url_s3(fichier_info['nom'], download=False)
-                file_url_download = generer_url_s3(fichier_info['nom'], download=True)
-            else:
-                file_url_view = f"/download/{fichier_info['nom']}"
-                file_url_download = f"/download-file/{fichier_info['nom']}"
+            # Fichier existe - Afficher avec options
+            file_url_view = f"/download/{fichier_info['nom']}"
+            file_url_download = f"/download-file/{fichier_info['nom']}"
             
             card_content = [
                 html.H6(label, className="mb-2"),
@@ -476,8 +381,7 @@ def create_inspecteur_box(tache, villa, is_admin):
                         id={'type': 'btn-download-doc', 'index': f"{tache}_{villa}_{type_doc}"},
                         color="primary", 
                         size="sm",
-                        href=file_url_download,
-                        target="_blank"
+                        href=file_url_download
                     )
                 ], className="w-100 mb-2")
             ]
@@ -616,7 +520,7 @@ def create_suivi_page(is_admin):
 def update_selected_cell(active_cell):
     if active_cell:
         col_id = active_cell['column_id']
-        if col_id != 'Tâche' and col_id in LISTE_VILLAS:
+        if col_id != 'Tâche' and col_id in LISTE_VILLAS:  # VÉRIFICATION AJOUTÉE
             row_idx = active_cell['row']
             col_idx = LISTE_VILLAS.index(col_id)
             
@@ -774,18 +678,13 @@ def update_folder_content(tache, villa, refresh, is_admin):
     for type_doc, label in types_docs.items():
         fichier_info = fichiers_existants.get(type_doc)
         if fichier_info:
-            # Générer les URLs
-            if USE_S3:
-                file_url_view = generer_url_s3(fichier_info['nom'], download=False)
-                file_url_download = generer_url_s3(fichier_info['nom'], download=True)
-            else:
-                file_url_view = f"/download/{fichier_info['nom']}"
-                file_url_download = f"/download-file/{fichier_info['nom']}"
+            file_url_view = f"/download/{fichier_info['nom']}"
+            file_url_download = f"/download-file/{fichier_info['nom']}"
             
             # Boutons de base
             buttons = [
                 dbc.Button("👁️ Voir", href=file_url_view, target="_blank", color="info", size="sm", className="me-1"),
-                dbc.Button("📥 Télécharger", href=file_url_download, target="_blank", color="primary", size="sm", className="me-1")
+                dbc.Button("📥 Télécharger", href=file_url_download, color="primary", size="sm", className="me-1")
             ]
             
             # Boutons admin
